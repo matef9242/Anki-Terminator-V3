@@ -32,15 +32,24 @@ This version includes significant enhancements that make Anki Terminator more ac
 - **Improved UI**: Enhanced model selection buttons with better styling
 - **Easy Switching**: Seamless switching between different AI models
 
-### 🔒 **Privacy & Security**
-- **Clean Installation**: All personal authentication data removed for safe sharing
-- **Fresh Setup Required**: Users need to configure their own authentication
-- **Privacy Compliant**: No personal data included in this distribution
+### � * *Issues Fixed**
+This version addresses several issues from the original repository:
 
-### ✅ **Testing & Validation**
-- **Comprehensive Testing**: All features tested across different language interfaces
-- **Cross-platform**: Verified compatibility on Windows, macOS, and Linux
-- **Quality Assurance**: 100% test coverage for critical functionality
+- **[Issue #31](https://github.com/shigeyukey/Anki-Terminator-/issues/31)**: Grok AI integration only worked for Arabic-speaking users
+  - **Fix**: Implemented universal CSS selectors that work for all languages
+  - **Impact**: Global accessibility for Grok AI features
+
+- **[Issue #10](https://github.com/shigeyukey/Anki-Terminator-/issues/10)**: Audio responses required manual user interaction to play
+  - **Fix**: Disabled `PlaybackRequiresUserGesture` setting for automatic playbook
+  - **Impact**: Seamless audio experience across all AI models
+
+- **Issue**: No voice input capabilities for AI interactions
+  - **Fix**: Added comprehensive microphone support with automatic permission handling
+  - **Impact**: Voice-based interactions now available
+
+- **Issue**: Limited AI model selection and poor UI integration
+  - **Fix**: Enhanced model selection buttons with improved styling and functionality
+  - **Impact**: Better user experience with support for multiple AI models
 
 ### 👨‍💻 **Contributors**
 - **Original Author**: [Shigeyuki](https://github.com/shigeyukey) - Created the amazing Anki Terminator add-on
