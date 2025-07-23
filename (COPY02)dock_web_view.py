@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-
+from functools import partial
+import gc
 import os
 import random
 import time
+import urllib.parse
 from aqt.utils import openLink
-from aqt import (
-QAction, QCheckBox, QClipboard, QComboBox, QDockWidget, QFontMetrics, QGraphicsOpacityEffect,
-QKeySequence, QLabel, QLineEdit, QMenu, QMimeData,
-QPixmap, QPushButton, QRadioButton, QButtonGroup, QSize, QTimer, QToolBar, QUrl, QVBoxLayout,
-QWebEnginePage,
-QWebEngineProfile, QWebEngineSettings, gui_hooks,
-QWebEngineView, QWidget, Qt, mw)
+from aqt import (QAction, QCheckBox, QClipboard, QComboBox, QDialog, QDockWidget, QEvent, QFontMetrics, QGraphicsOpacityEffect, QKeyEvent,
+                QKeySequence, QLabel, QLineEdit, QMenu, QMimeData,
+                QPixmap, QPushButton,  QSize, QTimer, QToolBar, QUrl, QVBoxLayout, QWebEngineHttpRequest,
+                QWebEnginePage,
+                QWebEngineProfile, QWebEngineSettings, gui_hooks,
+                QWebEngineView, QWidget, Qt, mw)
 from aqt.webview import AnkiWebView
 from os.path import join, dirname, exists
 from anki.cards import Card
@@ -33,7 +34,7 @@ PYGsound(THEME_CHANGE)
 
 from .path_manager import (BING_CHAT, CHAT_GPT, COOKIE_DATA, GOOGLE_BARD, IMAGE_FX, NOW_LOADING,
                             SHOW_ANSWER_PNG,HIDE_HIGHT, USER_FILES ,CUSTOM_AI,
-                            DEEP_SEEK,PERPLEXITY,CLAUDE,GROK_AI,
+                            DEEP_SEEK,PERPLEXITY,CLAUDE,
                             )
 from .shigetr import shige_tr, qtip_style
 
@@ -290,13 +291,6 @@ jgs    \  `-"`      `"-`   /
 
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        
-        # Enable media device access (microphone, camera)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
-        try:
-            settings.setAttribute(QWebEngineSettings.WebAttribute.ScreenCaptureEnabled, True)
-        except AttributeError:
-            pass  # This attribute might not be available in older Qt versions
 
         # ----------------------------------
         self.grey_widget = QWidget()
@@ -314,10 +308,6 @@ jgs    \  `-"`      `"-`   /
 
         self.webpage = CustomWebEnginePage(self.cookie_profile, self.webview) # Cookie monster
         # self.webpage = QWebEnginePage(self.cookie_profile, self.webview) # Cookie monster
-        
-        # Set up permission handling for media devices
-        self.webpage.featurePermissionRequested.connect(self.handle_permission_request)
-        
         self.webview.loadStarted.connect(self.on_load_started)
         self.webview.loadFinished.connect(self.on_load_finished)
 
@@ -338,7 +328,6 @@ jgs    \  `-"`      `"-`   /
 
         layout = QVBoxLayout(self)
         self.last_text_toolbar(layout)
-        self.make_ai_model_buttons(layout)  # Add AI model selection buttons
         self.make_menu_button(layout)
 
         layout.addWidget(self.webview)
@@ -390,88 +379,18 @@ jgs    \  `-"`      `"-`   /
 
     def inject_javascript(self):
         config = mw.addonManager.getConfig(__name__)
-        current_ai = config.get("now_AI_type", CHAT_GPT)
-        
-        # Apply read aloud to ChatGPT only
-        if current_ai != CHAT_GPT:
+        if not config.get("now_AI_type", False) == CHAT_GPT:
             return
         if not config.get("auto_read_aloud", True):
             return
 
         javascript_code = """
         let clickedTestIds = new Set();
-        let processingTurns = new Set(); // Track turns currently being processed
-        let lastSendButtonClick = 0;
-        let debugInfo = [];
-
-        function addDebugLog(message) {
-            // Only log to console, no visual display
-            console.log(message);
-        }
-
-        addDebugLog('🔊 Auto-read aloud script loaded!');
-
-        // Check if voice mode is active (simplified)
-        function checkVoiceMode() {
-            const voiceButton = document.querySelector('button[aria-label*="voice" i], button[aria-label*="microphone" i]');
-            if (voiceButton && voiceButton.getAttribute('aria-pressed') === 'true') {
-                return true;
-            }
-            
-            const listening = document.querySelector('button[aria-label*="listening" i], button[aria-label*="stop listening" i]');
-            return !!listening;
-        }
-
-        // Stop all currently playing audio
-        function stopAllAudio() {
-            const stopSelectors = [
-                'button[aria-label*="Stop" i]',
-                'button[data-testid="stop-button"]',
-                'button[title*="Stop" i]'
-            ];
-            
-            let stoppedAny = false;
-            for (const selector of stopSelectors) {
-                try {
-                    const stopButtons = document.querySelectorAll(selector);
-                    stopButtons.forEach(button => {
-                        if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
-                            button.click();
-                            stoppedAny = true;
-                            addDebugLog('🛑 Stopped audio');
-                        }
-                    });
-                } catch (e) {
-                    continue;
-                }
-            }
-            return stoppedAny;
-        }
-
-        // Monitor for new prompts being sent
-        function monitorSendButton() {
-            const sendButton = document.querySelector('button[data-testid="send-button"]');
-            if (sendButton) {
-                sendButton.addEventListener('click', function() {
-                    lastSendButtonClick = Date.now();
-                    addDebugLog('📤 New prompt sent');
-                    setTimeout(stopAllAudio, 100);
-                });
-            }
-        }
 
         function findAndClickButton() {
-            // Check if voice mode is active
-            if (checkVoiceMode()) {
-                addDebugLog('🎤 Voice mode active, skipping');
-                return;
-            }
-
             const conversationTurns = document.querySelectorAll('[data-testid^="conversation-turn-"]');
-            
             let maxTestIdElement = null;
             let maxTestId = -1;
-            
             conversationTurns.forEach(element => {
                 const testId = parseInt(element.getAttribute('data-testid').split('-').pop());
                 if (testId > maxTestId && !clickedTestIds.has(testId)) {
@@ -481,186 +400,15 @@ jgs    \  `-"`      `"-`   /
             });
 
             if (maxTestIdElement) {
-                // Check if this turn is already being processed or completed
-                if (clickedTestIds.has(maxTestId) || processingTurns.has(maxTestId)) {
-                    return; // Already processed or currently processing
-                }
-                
-                // Check if this is an assistant response (not user message)
-                const isAssistantResponse = maxTestIdElement.querySelector('[data-message-author-role="assistant"]');
-                if (!isAssistantResponse) {
+                const button = maxTestIdElement.querySelector('span[data-state="closed"] > button[aria-label="Read aloud"]');
+                if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
+                    button.click();
                     clickedTestIds.add(maxTestId);
-                    addDebugLog('⏭️ Skipping user message turn: ' + maxTestId);
-                    return;
                 }
-                
-                // Check if response is still generating
-                const isGenerating = maxTestIdElement.querySelector('button[data-testid="stop-button"]') || 
-                                   maxTestIdElement.querySelector('button[aria-label*="Stop generating"]') ||
-                                   maxTestIdElement.querySelector('.result-streaming');
-                
-                if (isGenerating) {
-                    addDebugLog('⏳ Response still generating, waiting...');
-                    return; // Don't mark as processed, try again later
-                }
-                
-                // Mark as being processed to prevent duplicate processing
-                processingTurns.add(maxTestId);
-                addDebugLog('🎯 Processing assistant turn: ' + maxTestId);
-                
-                // Wait longer and try multiple times for buttons to appear
-                let attempts = 0;
-                const maxAttempts = 5;
-                
-                function checkForButtons() {
-                    attempts++;
-                    
-                    // Re-scan for buttons after delay
-                    const allButtons = maxTestIdElement.querySelectorAll('button');
-                    const allClickableElements = maxTestIdElement.querySelectorAll('button, [role="button"], [onclick], .clickable');
-                    
-                    addDebugLog('🔍 Attempt ' + attempts + ': Found ' + allButtons.length + ' buttons, ' + allClickableElements.length + ' clickable elements');
-                    
-                    // If no buttons found and we haven't reached max attempts, try again
-                    if (allButtons.length === 0 && attempts < maxAttempts) {
-                        addDebugLog('⏳ No buttons yet, retrying in 2 seconds...');
-                        setTimeout(checkForButtons, 2000);
-                        return;
-                    }
-                    
-                    let buttonInfo = [];
-                    allButtons.forEach((btn, index) => {
-                        const label = btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.textContent?.trim() || 'No label';
-                        const testId = btn.getAttribute('data-testid') || '';
-                        buttonInfo.push('Btn' + (index + 1) + ': ' + label.substring(0, 15) + (testId ? ' [' + testId + ']' : ''));
-                    });
-                    addDebugLog('Buttons: ' + buttonInfo.join(', '));
-                    
-                    // Also check for any elements with speaker/audio icons
-                    const iconElements = maxTestIdElement.querySelectorAll('svg, i, span[class*="icon"]');
-                    let iconInfo = [];
-                    iconElements.forEach((icon, index) => {
-                        const parent = icon.closest('button, [role="button"]');
-                        if (parent && (icon.innerHTML.includes('volume') || icon.innerHTML.includes('speaker') || icon.innerHTML.includes('audio'))) {
-                            iconInfo.push('Icon' + (index + 1) + ': ' + (parent.getAttribute('aria-label') || 'Audio icon'));
-                        }
-                    });
-                    if (iconInfo.length > 0) {
-                        addDebugLog('Audio icons: ' + iconInfo.join(', '));
-                    }
-                    
-                    // Try COMPREHENSIVE selectors for read aloud button
-                    const selectors = [
-                        // Standard selectors
-                        'button[aria-label="Read aloud"]',
-                        'button[aria-label="Read Aloud"]',
-                        'span[data-state="closed"] > button[aria-label="Read aloud"]',
-                        'span[data-state="closed"] > button[aria-label="Read Aloud"]',
-                        'button[data-testid="voice-play-turn-action-button"]',
-                        'button[title="Read aloud"]',
-                        'button[title="Read Aloud"]',
-                        
-                        // Partial matches
-                        'button[aria-label*="read" i]',
-                        'button[aria-label*="play" i]',
-                        'button[aria-label*="audio" i]',
-                        'button[aria-label*="voice" i]',
-                        'button[aria-label*="speak" i]',
-                        'button[aria-label*="sound" i]',
-                        'button[aria-label*="listen" i]',
-                        
-                        // Data attributes
-                        'button[data-testid*="voice"]',
-                        'button[data-testid*="audio"]',
-                        'button[data-testid*="play"]',
-                        'button[data-testid*="sound"]',
-                        
-                        // Icon-based (look for buttons containing audio-related SVGs)
-                        'button:has(svg[*|href*="volume"])',
-                        'button:has(svg[*|href*="speaker"])',
-                        'button:has(svg[*|href*="audio"])',
-                        'button:has(svg[class*="volume"])',
-                        'button:has(svg[class*="speaker"])',
-                        'button:has(svg[class*="audio"])',
-                        
-                        // Class-based
-                        'button[class*="voice"]',
-                        'button[class*="audio"]',
-                        'button[class*="sound"]',
-                        'button[class*="speak"]'
-                    ];
-                    
-                    let button = null;
-                    let foundSelector = '';
-                    for (const selector of selectors) {
-                        try {
-                            button = maxTestIdElement.querySelector(selector);
-                            if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
-                                foundSelector = selector;
-                                addDebugLog('✅ Found button: ' + selector);
-                                break;
-                            }
-                        } catch (e) {
-                            continue;
-                        }
-                    }
-                    
-                    if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
-                        // Double-check this isn't a stop button (which would stop the audio)
-                        const buttonLabel = button.getAttribute('aria-label') || button.textContent?.trim() || '';
-                        if (buttonLabel.toLowerCase().includes('stop')) {
-                            addDebugLog('🛑 Skipping stop button to avoid stopping audio');
-                            clickedTestIds.add(maxTestId);
-                            processingTurns.delete(maxTestId);
-                            return;
-                        }
-                        
-                        addDebugLog('🎵 CLICKING READ ALOUD!');
-                        
-                        const timeSinceLastSend = Date.now() - lastSendButtonClick;
-                        if (timeSinceLastSend < 30000) {
-                            addDebugLog('🔄 Stopping previous audio first');
-                            stopAllAudio();
-                            setTimeout(() => {
-                                button.click();
-                                clickedTestIds.add(maxTestId);
-                                processingTurns.delete(maxTestId);
-                                addDebugLog('🎵 Started audio for turn: ' + maxTestId);
-                            }, 300);
-                        } else {
-                            button.click();
-                            clickedTestIds.add(maxTestId);
-                            processingTurns.delete(maxTestId);
-                            addDebugLog('🎵 Started audio for turn: ' + maxTestId);
-                        }
-                    } else {
-                        clickedTestIds.add(maxTestId);
-                        processingTurns.delete(maxTestId);
-                        addDebugLog('❌ No read aloud button found');
-                        addDebugLog('💡 Check if ChatGPT Plus/Voice features enabled');
-                        
-                        // Check if this might be a free account without voice features
-                        const upgradeButton = document.querySelector('button[data-testid*="upgrade"], button[aria-label*="upgrade" i], a[href*="plus"]');
-                        if (upgradeButton) {
-                            addDebugLog('💰 Detected free account - voice features may require ChatGPT Plus');
-                        }
-                    }
-                }
-                
-                // Start checking for buttons with initial delay
-                setTimeout(checkForButtons, 3000); // Wait 3 seconds initially
-                
-            } else {
-                addDebugLog('✅ No new turns to process');
             }
         }
 
-        // Initialize
-        monitorSendButton();
-        setInterval(monitorSendButton, 5000);
-        setInterval(findAndClickButton, 4000); // Slightly slower to give more time
-        
-        addDebugLog('🚀 Monitoring started!');
+        setInterval(findAndClickButton, 2000);
         """
 
         # javascript_code = """
@@ -794,17 +542,9 @@ jgs    \  `-"`      `"-`   /
             and not config["Custom_AI_URL"].isspace()):
             ChatGPT_URL = config["Custom_AI_URL"]
         else: # ﾃﾞﾌｫﾙﾄ
-            ChatGPT_URL = config["ChatGPT_URL"].get(CHAT_GPT, "https://chat.openai.com/")
-            print(f"[DEBUG] Fallback triggered for AI type: {now_AI_type}")
+            ChatGPT_URL = CHAT_GPT
 
-        # Debug: Print the URL being loaded
-        print(f"[DEBUG] AI Type: {now_AI_type}")
-        print(f"[DEBUG] Available URLs: {list(config['ChatGPT_URL'].keys())}")
-        print(f"[DEBUG] Key exists in config: {now_AI_type in config['ChatGPT_URL']}")
-        print(f"[DEBUG] GROK_AI constant: {GROK_AI}")
-        print(f"[DEBUG] Loading URL: {ChatGPT_URL}")
-        
-        # Load the new URL
+
         self.webview.load(QUrl(ChatGPT_URL))
 
     def on_load_started(self):
@@ -1047,137 +787,39 @@ jgs    \  `-"`      `"-`   /
             self.make_button(button_name, action_function, self.toolBar)
 
 
-    # ｺﾝﾎﾞﾎﾞｯｸｽ ========================
-    def save_selection(self):
-        selected_key = self.combo_box.currentData()
-        config = mw.addonManager.getConfig(__name__)
-        config["default_prompt"] = selected_key
-        mw.addonManager.writeConfig(__name__, config)
-
-    def adjust_combo_box_width(self):
-        font_metrics = QFontMetrics(self.combo_box.font())
-        text = self.combo_box.currentText()
-        width = font_metrics.horizontalAdvance(text) + 40  # 余白を追加
-        self.combo_box.setFixedWidth(width)
-
+        # ｺﾝﾎﾞﾎﾞｯｸｽ ========================
     def make_combo_box(self, button_function_pairs):
+        def save_selection():
+            selected_key = combo_box.currentData()
+            config = mw.addonManager.getConfig(__name__)
+            config["default_prompt"] = selected_key
+            mw.addonManager.writeConfig(__name__, config)
+
+        def adjust_combo_box_width():
+            font_metrics = QFontMetrics(combo_box.font())
+            text = combo_box.currentText()
+            width = font_metrics.horizontalAdvance(text) + 40  # 余白を追加
+            combo_box.setFixedWidth(width)
+
         config = mw.addonManager.getConfig(__name__)
         default_prompt = config.get("default_prompt", "random_prompt")
-        self.combo_box = QComboBox()
+        combo_box = QComboBox()
 
         for key, value in button_function_pairs.items():
-            self.combo_box.addItem(value, key)
+            combo_box.addItem(value, key)
 
         if default_prompt not in button_function_pairs:
             default_prompt = "random_prompt"
 
-        default_index = self.combo_box.findData(default_prompt)
+        default_index = combo_box.findData(default_prompt)
         if default_index != -1:
-            self.combo_box.setCurrentIndex(default_index)
+            combo_box.setCurrentIndex(default_index)
 
-        self.combo_box.currentIndexChanged.connect(self.save_selection)
-        self.combo_box.currentIndexChanged.connect(self.adjust_combo_box_width)
-        self.adjust_combo_box_width()
-        self.toolBar.addWidget(self.combo_box)
-    
-    # AI Model Selection Buttons ========================
-    def make_ai_model_buttons(self, layout: QVBoxLayout):
-        """Create AI model selection buttons with radio button functionality"""
-        config = mw.addonManager.getConfig(__name__)
-        current_ai = config.get("now_AI_type", CHAT_GPT)
-        
-        # Create toolbar for AI model buttons
-        self.ai_model_bar = QToolBar()
-        self.ai_model_bar.setStyleSheet("QToolBar { margin: 1px; padding: 1px; }")
-        layout.addWidget(self.ai_model_bar)
-        
-        # Create button group for radio button functionality
-        self.ai_model_group = QButtonGroup()
-        
-        # AI model configurations
-        ai_models = [
-            (CHAT_GPT, "ChatGPT", "🤖"),
-            (GOOGLE_BARD, "Gemini", "🔮"),
-            (GROK_AI, "Grok", "🚀"),
-            (CLAUDE, "Claude", "🧠"),
-            (DEEP_SEEK, "DeepSeek", "🔍"),
-            (PERPLEXITY, "Perplexity", "❓"),
-            (BING_CHAT, "Bing", "🔎")
-        ]
-        
-        self.ai_model_buttons = {}
-        
-        for ai_type, display_name, icon in ai_models:
-            # Create radio button for each AI model
-            radio_button = QRadioButton(f"{icon} {display_name}")
-            
-            # Style with highlighting for selected model
-            if current_ai == ai_type:
-                radio_button.setStyleSheet("""
-                    QRadioButton { 
-                        margin: 2px; padding: 4px; font-size: 11px; font-weight: bold;
-                        background-color: #4CAF50; color: white; border-radius: 3px;
-                    }
-                """)
-                radio_button.setChecked(True)
-            else:
-                radio_button.setStyleSheet("""
-                    QRadioButton { 
-                        margin: 2px; padding: 4px; font-size: 11px; font-weight: bold;
-                        border-radius: 3px;
-                    }
-                """)
-            
-            # Connect to selection handler
-            radio_button.toggled.connect(lambda checked, ai=ai_type: self.ai_model_selected(ai, checked))
-            
-            # Add to button group and store reference
-            self.ai_model_group.addButton(radio_button)
-            self.ai_model_buttons[ai_type] = radio_button
-            self.ai_model_bar.addWidget(radio_button)
-    
-    def ai_model_selected(self, selected_ai, checked):
-        """Handle AI model selection with radio button functionality"""
-        if checked:  # Only process when button is selected (not deselected)
-            print(f"[DEBUG] AI Model Selected: {selected_ai}")
-            
-            # Update styling for all buttons
-            config = mw.addonManager.getConfig(__name__)
-            for ai_type, button in self.ai_model_buttons.items():
-                if ai_type == selected_ai:
-                    # Highlight selected button
-                    button.setStyleSheet("""
-                        QRadioButton { 
-                            margin: 2px; padding: 4px; font-size: 11px; font-weight: bold;
-                            background-color: #4CAF50; color: white; border-radius: 3px;
-                        }
-                    """)
-                else:
-                    # Normal styling for unselected buttons (bold text, no background)
-                    button.setStyleSheet("""
-                        QRadioButton { 
-                            margin: 2px; padding: 4px; font-size: 11px; font-weight: bold;
-                            border-radius: 3px;
-                        }
-                    """)
-            
-            # Update configuration
-            config["now_AI_type"] = selected_ai
-            mw.addonManager.writeConfig(__name__, config)
-            print(f"[DEBUG] Config updated with AI type: {selected_ai}")
-            
-            # Show loading screen for all models (including Grok)
-            self.on_load_started()
-            
-            # Reload the window with the chosen model
-            self.load_url()
-            PYGsound(THEME_CHANGE)
-            
-            # Update top toolbar icon
-            from .update_top_toolbar import change_AI_icon_on_top_tool_bar
-            change_AI_icon_on_top_tool_bar()
-
-    # ｺﾝﾎﾞﾎﾞｯｸｽ ========================
+        combo_box.currentIndexChanged.connect(save_selection)
+        combo_box.currentIndexChanged.connect(adjust_combo_box_width)
+        adjust_combo_box_width()
+        self.toolBar.addWidget(combo_box)
+        # ｺﾝﾎﾞﾎﾞｯｸｽ ========================
 
 
 
@@ -1261,18 +903,6 @@ jgs    \  `-"`      `"-`   /
     def wrap_with_quotes(self,text):
         return "'" + text + "'"
 
-
-    def explain_with_ankiteminator(self, selected):
-        print(selected)
-        if not selected:
-            return
-        config = mw.addonManager.getConfig(__name__)
-        default_prompt = config.get("default_prompt", "random_prompt")
-        if default_prompt not in config:
-            default_prompt = "random_prompt"
-        self.more_function(default_prompt, selected)
-        print("done")
-
     def contextMenu(self, webview: AnkiWebView, menu: QMenu,*args,**kwargs):
         selected = webview.page().selectedText()
         if not selected:
@@ -1280,14 +910,12 @@ jgs    \  `-"`      `"-`   /
         menu.addSeparator()
         self.context_action = QAction("🤖Explain with AnkiTerminator", mw)
 
-        # config = mw.addonManager.getConfig(__name__)
-        # default_prompt = config.get("default_prompt", "random_prompt")
-        # if default_prompt not in config:
-        #     default_prompt = "random_prompt"
+        config = mw.addonManager.getConfig(__name__)
+        default_prompt = config.get("default_prompt", "random_prompt")
+        if default_prompt not in config:
+            default_prompt = "random_prompt"
 
-        # self.context_action.triggered.connect(lambda default_prompt=default_prompt, selected=selected: self.more_function(default_prompt, selected))
-
-        self.context_action.triggered.connect(lambda _, selected=selected: self.explain_with_ankiteminator(selected))
+        self.context_action.triggered.connect(lambda default_prompt=default_prompt, selected=selected: self.more_function(default_prompt, selected))
 
         menu.addAction(self.context_action)
 
@@ -1336,7 +964,7 @@ jgs    \  `-"`      `"-`   /
 
         first_field_name = self.get_priority_field_name(config, note_type)
 
-        default_prompt = config.get("default_prompt", "random_prompt")
+        default_prompt = config.get("default_prompt","random_prompt")
         if default_prompt not in config:
             default_prompt = "random_prompt"
         random_prompt = config[default_prompt]
@@ -1345,14 +973,15 @@ jgs    \  `-"`      `"-`   /
         selected_prompt = random.choice(random_prompt)
 
 
-        note_field_text = card.note()[first_field_name]
-        self.set_last_text(note_field_text)
+
+        text = card.note()[first_field_name]
+        self.set_last_text(text)
         if "{}" in selected_prompt:
             prompt_text = selected_prompt.format(SYMBOL[CHOICE_SYMBOL][0]
-                                                    + note_field_text +
+                                                    + text +
                                                     SYMBOL[CHOICE_SYMBOL][1])
         else:
-            prompt_text = note_field_text + selected_prompt
+            prompt_text = text + selected_prompt
         self.handle_load_finished(prompt_text)
 
     # ------------------------------------------------
@@ -1405,15 +1034,17 @@ jgs    \  `-"`      `"-`   /
 
     ### clip bord ###
     def restore_clipboard(self):
+        print("> run restore_clipboard")
         if isinstance(self.original_clipboard_data, QMimeData):
-            self.clipboard.clear()
+            self.clipboard = mw.app.clipboard()
             self.clipboard.setMimeData(self.original_clipboard_data, QClipboard.Mode.Clipboard)
             self.original_clipboard_data = None
+            print("> restore done")
 
     def paste_from_clipboard(self):
         print("> run paste_from_clipboard")
         if self.auto_send_prompt_text:
-            if self.auto_send_prompt_text == self.clipboard.text():
+            if self.auto_send_prompt_text == mw.app.clipboard().text():
                 self.webview.triggerPageAction(QWebEnginePage.WebAction.Paste)
                 self.auto_send_prompt_text = None
                 print("> paste done")
@@ -1449,7 +1080,7 @@ jgs    \  `-"`      `"-`   /
 
         now_AI_type = config["now_AI_type"]
 
-        if not now_AI_type in [GOOGLE_BARD, BING_CHAT]:
+        if not now_AI_type == GOOGLE_BARD:
             prompt_text = prompt_text.replace("'", "\\'")
             prompt_text = prompt_text.replace('"', '\\"')
             prompt_text = prompt_text.replace('\n', '\\n')
@@ -1457,7 +1088,7 @@ jgs    \  `-"`      `"-`   /
 
         # skip_response_icon_check = "true"
 
-        parent_element = ""
+
         if now_AI_type == CHAT_GPT:
             class_name = "#prompt-textarea"
             button_class = 'button[data-testid="send-button"]'
@@ -1467,16 +1098,10 @@ jgs    \  `-"`      `"-`   /
             # stop_button_class = 'button[data-testid="fruitjuice-stop-button"]'
             parent_element = ""
 
-        elif now_AI_type == GROK_AI:
-            class_name = 'textarea[dir="auto"][aria-label*="اسأل غروك"], textarea[class*="w-full"][style*="resize: none"]'
-            button_class = 'button[type="submit"][aria-label="إرسال"], button[class*="group flex flex-col justify-center rounded-full"][type="submit"]'
-            stop_button_class = 'button[aria-label*="إيقاف استجابة النموذج"], button[class*="group flex flex-col justify-center rounded-full"][aria-label*="إيقاف"]'
-            parent_element = ""
-
         elif now_AI_type == DEEP_SEEK:
             class_name = "#chat-input" #".c92459f0"
-            button_class = '._6f28693' #'.f6d670'
-            stop_button_class = '._6f28693' #''.f6d670' #'.f286936b'
+            button_class = '.f6d670'
+            stop_button_class = '.f6d670' #'.f286936b'
             parent_element = ""
 
         elif now_AI_type == PERPLEXITY:
@@ -1498,27 +1123,30 @@ jgs    \  `-"`      `"-`   /
             parent_element = ""
 
         elif now_AI_type == GOOGLE_BARD:
+            
             class_name = ".textarea.new-input-ui"#".ql-editor.textarea"
             button_class = '.send-button.submit'#".send-button"
             stop_button_class = '.send-button.stop'#".send-button"
             parent_element = ""
+
 
             # stop_button_class = "span.overline"
             # parent_element = ".parentElement"
             # skip_response_icon_check = "document.querySelector('svg[alt=\"skip response icon\"]')"
 
         elif now_AI_type == BING_CHAT:
-            
-            class_name = "#userInput"
-            button_class = ".rounded-submitButton"
-            stop_button_class = ""
-            
             # if config["submit_text"] or click :
-            # encoded_text = urllib.parse.quote(prompt_text)
-            # url = f"https://www.bing.com/search?showconv=1&sendquery=1&q={encoded_text}"
-            # self.webview.load(QUrl(url))
+            encoded_text = urllib.parse.quote(prompt_text)
+            url = f"https://www.bing.com/search?showconv=1&sendquery=1&q={encoded_text}"
+            self.webview.load(QUrl(url))
 
-            # return
+            return
+        #     class_name = ".text-area"
+        #     button_class = "button[is='cib-button'][aria-label='Submit']"
+        #     stop_button_class = "#stop-responding-button"
+        #     parent_element = ""
+        #     # stop_button_class = "span.overline"
+        #     # parent_element = ".parentElement"
 
 
         else:
@@ -1555,19 +1183,18 @@ jgs    \  `-"`      `"-`   /
         # replaceValue('{class_name}', '{text}');
         # """
 
-        if now_AI_type in  [GOOGLE_BARD, BING_CHAT]:
+        if now_AI_type == GOOGLE_BARD:
 
-            if stop_button_class:
-                js_code = f"""
-                function clickButton() {{
-                    var button = document.querySelector('{stop_button_class}');
-                    if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {{
-                        button.click();
-                    }}
+            js_code = f"""
+            function clickButton() {{
+                var button = document.querySelector('{stop_button_class}');
+                if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {{
+                    button.click();
                 }}
-                clickButton();
-                """
-                self.webview.page().runJavaScript(js_code, self.js_callback)
+            }}
+            clickButton();
+            """
+            self.webview.page().runJavaScript(js_code, self.js_callback)
 
             js_code = f"""
             function focusAndSelectElement(selector) {{
@@ -1598,7 +1225,7 @@ jgs    \  `-"`      `"-`   /
             self.clipboard.clear()
             self.clipboard.setText(prompt_text)
             self.auto_send_prompt_text = prompt_text
-            QTimer.singleShot(500, self.paste_from_clipboard)
+            QTimer.singleShot(200, self.paste_from_clipboard)
 
             js_code += f"""
             setTimeout(function() {{
@@ -1606,12 +1233,12 @@ jgs    \  `-"`      `"-`   /
                 if (submitButton && !submitButton.disabled && submitButton.getAttribute('aria-disabled') !== 'true') {{
                     submitButton.click();
                 }}
-            }}, 600);
+            }}, 300);
             """
 
             self.webview.page().runJavaScript(js_code, self.js_callback)
 
-            QTimer.singleShot(700, self.restore_clipboard)
+            QTimer.singleShot(400, self.restore_clipboard)
             return
 
 
@@ -1677,21 +1304,6 @@ jgs    \  `-"`      `"-`   /
 
         self.webview.page().runJavaScript(js_code, self.js_callback)
 
-
-    def handle_permission_request(self, origin, permission):
-        """Handle permission requests for media devices"""
-        from aqt import QWebEnginePage
-        
-        # Auto-grant microphone and camera permissions
-        if permission == QWebEnginePage.Feature.MediaAudioCapture:
-            self.webpage.setFeaturePermission(origin, permission, QWebEnginePage.PermissionPolicy.PermissionGrantedByUser)
-        elif permission == QWebEnginePage.Feature.MediaVideoCapture:
-            self.webpage.setFeaturePermission(origin, permission, QWebEnginePage.PermissionPolicy.PermissionGrantedByUser)
-        elif permission == QWebEnginePage.Feature.MediaAudioVideoCapture:
-            self.webpage.setFeaturePermission(origin, permission, QWebEnginePage.PermissionPolicy.PermissionGrantedByUser)
-        else:
-            # For other permissions, use default behavior
-            self.webpage.setFeaturePermission(origin, permission, QWebEnginePage.PermissionPolicy.PermissionUnknown)
 
     def js_callback(self, result):
         print("JavaScript result: ", result)
