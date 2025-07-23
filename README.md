@@ -35,9 +35,9 @@ This version includes significant enhancements that make Anki Terminator more ac
 ### � * *Issues Fixed**
 This version addresses several issues from the original repository:
 
-- **[Issue #31](https://github.com/shigeyukey/Anki-Terminator-/issues/31)**: Grok AI integration only worked for Arabic-speaking users
-  - **Fix**: Implemented universal CSS selectors that work for all languages
-  - **Impact**: Global accessibility for Grok AI features
+- **[Issue #31](https://github.com/shigeyukey/Anki-Terminator-/issues/31)**: Grok AI integration not implemented.
+  - **Fix**: Implemented universal CSS selectors that work for all languages.
+  - **Impact**: Global accessibility for Grok AI features.
 
 - **[Issue #10](https://github.com/shigeyukey/Anki-Terminator-/issues/10)**: Audio responses required manual user interaction to play
   - **Fix**: Disabled `PlaybackRequiresUserGesture` setting for automatic playbook
@@ -47,7 +47,7 @@ This version addresses several issues from the original repository:
   - **Fix**: Added comprehensive microphone support with automatic permission handling
   - **Impact**: Voice-based interactions now available
 
-- **Issue**: Limited AI model selection and poor UI integration
+- **Issue**: Limited AI model selection.
   - **Fix**: Enhanced model selection buttons with improved styling and functionality
   - **Impact**: Better user experience with support for multiple AI models
 
